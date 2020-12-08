@@ -42,7 +42,8 @@ centroids <- read_csv("data/CenPop2010_Mean_TR25.txt", col_names = TRUE,
 
 mbta <- st_read(dsn = "data/mbta_rapid_transit", 
                       layer = "MBTA_ARC") %>% 
-  st_transform(boston, crs = "+init=epsg:4326") %>%
+  # st_transform(boston, crs = "+init=epsg:4326") %>%
+  st_transform(crs = 4326) %>% 
   clean_names() %>% 
   mutate(line = str_to_title(line)) %>%
   mutate(route = paste(line, "Line,", route))
@@ -51,7 +52,8 @@ mbta <- st_read(dsn = "data/mbta_rapid_transit",
 
 mbta_nodes <- st_read(dsn = "data/mbta_rapid_transit/",
                  layer = "MBTA_NODE")%>% 
-  st_transform(nodes, crs = "+init=epsg:4326") %>%
+  # st_transform(nodes, crs = "+init=epsg:4326") %>%
+  st_transform(crs = 4326) %>% 
   clean_names()
 
 # Extract the longitude and lattitude data from the geometry column in the
@@ -367,6 +369,11 @@ recipe_4 <- recipe(distance ~ white + black + asian + hispanic + plurality,
                    data = model_data) %>% 
   step_dummy(plurality)
 
+recipe_5 <- recipe(distance ~ white + black + asian + hispanic + plurality,
+                   data = model_data) %>% 
+  step_dummy(plurality) %>% 
+  step_poly(white:hispanic, degree = 3)
+
 # Create workflow objects to store lm and stan models. 
 
 lm_wfl <- workflow() %>% 
@@ -394,7 +401,7 @@ stan_wfl_4 <- stan_wfl %>% add_recipe(recipe_4)
 # Evaluate the recipes by calculating the root mean squared error (RMSE) of
 # each model's predictions -- compare each model's predictions for the training
 # data against the observed values in the training data. Define a function to
-# calculate RMSE so it's easier  to swap out workflows and quickly compare
+# calculate RMSE so it's easier to swap out workflows and quickly compare
 # models.
 
 prediction_error <- function(wfl, data){
@@ -423,7 +430,7 @@ lm_error <- tibble(wfl = c(1:4),
                                    prediction_error(lm_wfl_3, model_test),
                                    prediction_error(lm_wfl_4, model_test)))
 
-stan_error <- tibble(wfl = c(1:4),
+stan_error <- tibble(wfl = c(1:5),
                      rmse_train = c(prediction_error(stan_wfl_1, model_train),
                               prediction_error(stan_wfl_2, model_train),
                               prediction_error(stan_wfl_3, model_train),

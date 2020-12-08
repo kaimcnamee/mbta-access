@@ -55,7 +55,7 @@ ui <-
              div(class = "map", tags$head(includeCSS("styles.css")),
                 leafletOutput("map1", width = "100%", height = "100%"),
                 absolutePanel(id = "info", class = "panel panel-default", 
-                              style = "color: white", bottom = 50, left = 50, 
+                              style = "color: white", bottom = 25, left = 50, 
                               width = 300, fixed = TRUE, draggable = FALSE, 
                               height = "auto", 
                               h3("Race on the T"),
