@@ -1,0 +1,54 @@
+/* https://github.com/eparker12/nCoV_tracker/blob/master/app.R */
+
+body, html{
+  height: 100%;
+}
+
+.map {
+  position: fixed;
+  top: 45px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.bg {
+  /* Set size */
+  min-height: 100%;
+  min-width: 1024px;
+	
+  /* Set up proportionate scaling */
+  width: 100%;
+  height: auto;
+	
+  /* Set up positioning */
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+.flex {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+
+/* Customize fonts */
+body, label, input, button, select { 
+  font-family: 'Helvetica', Helvetica;
+  font-weight: 200;
+}
+
+h1, h2, h3, h4 { font-weight: 400; }
+
+#info {
+  /* Appearance */
+  outline-style: none;
+  background-color: #333;
+  padding: 0 10px 10px 10px;
+  opacity: 0.8;
+}

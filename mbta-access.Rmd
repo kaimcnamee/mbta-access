@@ -1,0 +1,593 @@
+---
+title: "MBTA Access"
+author: "Kai McNamee"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(tidycensus)
+library(leaflet)
+library(janitor)
+library(sf)
+library(ggplot2)
+library(geosphere)
+library(rstanarm)
+library(tidymodels)
+library(RColorBrewer)
+library(readxl)
+library(gtsummary)
+library(broom.mixed)
+library(gt)
+```
+
+```{r get-data cache=true}
+
+# Read in centroid longitude-lattitude data corresponding for census tracts.
+# Filter the data to include only the 3 counties served by the MBTA: Middlesex,
+# Norfolk, Suffolk.
+
+centroids <- read_csv("data/CenPop2010_Mean_TR25.txt", col_names = TRUE, 
+                      cols(TRACTCE = col_character(),
+                           COUNTYFP = col_character(),
+                           .default = col_double())) %>% 
+  clean_names() %>% 
+  rename(tractid = tractce) %>% 
+  filter(countyfp %in% c("017", "021", "025")) %>% 
+  rename(lon = longitude, lat = latitude)
+
+# Read in geospatial data for MBTA lines. st_transform(crs = 4326) stores
+# shapefile data in longitude and latitude date (GeoJSON).
+
+mbta <- st_read(dsn = "data/mbta_rapid_transit", 
+                      layer = "MBTA_ARC") %>% 
+  st_transform(boston, crs = "+init=epsg:4326") %>%
+  clean_names() %>% 
+  mutate(line = str_to_title(line)) %>%
+  mutate(route = paste(line, "Line,", route))
+
+# Read in geospatial data for MBTA stations. 
+
+mbta_nodes <- st_read(dsn = "data/mbta_rapid_transit/",
+                 layer = "MBTA_NODE")%>% 
+  st_transform(nodes, crs = "+init=epsg:4326") %>%
+  clean_names()
+
+# Extract the longitude and lattitude data from the geometry column in the
+# mbta_nodes data. Having the coordinates in 2 columns will be helpful for the
+# next calculations.This function was giving me issues while piped with the rest
+# of the data cleaning, so it has to be executed in its own pipe.
+
+node_extract <- extract(mbta_nodes, geometry, 
+                      into = c("lon", "lat"), "\\((.*),(.*)\\)", conv = T)
+
+# Combine the extracted lon-lat data into ann object containing station names.
+# Add an id column to make it possible to recode the data in later
+# transformations.
+
+node_coord <- tibble(station = node_extract$station) %>% 
+  mutate(lon = node_extract$lon,
+         lat = node_extract$lat,
+         id = row_number())
+
+# Read in ACS data. Define reacevars object to pass into the get_acs() call.
+# Within get_acs(), specify tract as the unit of analysis,  Ma as the state, the
+# three counties served by the MBTA as the counties, and summary_var as the
+# population.
+
+racevars <- c(White = "B02001_002",
+              Black = "B02001_003",
+              Asian = "B02001_005",
+              Hispanic = "B03003_003")
+
+counties <- get_acs(geography = "tract",
+                  variables = racevars, 
+                  year = 2018,
+                  state = "025",
+                  county = c("017", "021", "025"),
+                  geometry = TRUE,
+                  summary_var = "B02001_001") %>% 
+  clean_names() %>% 
+  mutate(percent = 100 * estimate / summary_est) %>%
+    
+  # Convert values into percentages by dividing white, Black, Asian, and
+  # Hispanic populations by total population (B02001_001) in each census tract.
+
+  st_transform(crs = 4326) %>%
+  
+  #  Must st_transform on the data locally, then use transformed data on Shiny
+  #  (st_transform throws an error on Shiny and I can't figure out why)
+  
+  drop_na() %>% 
+  mutate(county = map(geoid, ~ case_when(
+                      str_detect(., "25017") == TRUE ~ "Middlesex",
+                      str_detect(., "25021") == TRUE ~ "Norfolk",
+                      str_detect(., "25025") == TRUE ~ "Suffolk")))
+
+# Clean up counties object and prepare clean the data so it can be joined with
+# the centroid data. Arrange by tractid so data doesn't get mismatched in later
+# steps.
+
+counties <- counties %>% 
+  mutate(tractid = substr(geoid, 6, 11)) %>% 
+  select(county, tractid, name, variable, geometry, percent) %>% 
+  arrange(tractid)
+
+# inner_join county level data with tract centroid data. The result is a tibble
+# containing census tracts of interest with their corresponding centroid
+# coordinates. Arrange by tractid so data doesn't get mismatched in later steps. 
+
+tract_coord <- inner_join(centroids, counties, by = "tractid")
+tract_coord <- tract_coord %>% 
+  select(county, name, tractid, variable, geometry, lon, lat, percent) %>% 
+  arrange(tractid)
+```
+
+```{r distance}
+
+# Use pointDistance in the raster package to calculate the distances between
+# tract centroids and MBTA nodes. Note: don't load raster package because it
+# will break something else. Call raster function with raster::pointDistance.
+# The result is a matrix containing the distances between every combination of
+# tract centroids and MBTA stations.
+
+distance_matrix <- raster::pointDistance(tract_coord[c("lon", "lat")],
+                           node_coord[c("lon", "lat")], lonlat = TRUE)
+
+# Extract the closest station to each centroid and store it in the pairs object.
+# Store the minimum distance to the station for each centroid in the distance
+# object. More info: # https://stackoverflow.com/questions/47663254/spatial-nearest-neighbor-assignment-in-r/47664622#47664622
+
+pairs <- apply(distance_matrix, 1, which.min)
+distance <- apply(distance_matrix, 1, min)
+
+# Combine distance data with county info. Join node_coord to convert closest
+# station id's into closest station names. The final combined object includes
+# census tract shape data, demographic data, distance to the nearest T station,
+# and name of the nearest T station.
+
+combined <- counties %>% 
+  mutate(closest_node = pairs,
+         distance = distance) %>% 
+  inner_join(node_coord, by = c("closest_node" = "id")) %>% 
+  select(-lon, -lat) %>% 
+  mutate(name = str_remove(name, ", Massachusetts"))
+
+# Save the combined data frame as an RDS file for Shiny. 
+# saveRDS(combined, "data.RDS")
+
+```
+
+```{r layered-map}
+
+# Define define data frames for each ethnic/racial group so they can be mapped
+# to distinct Leaflet layers..
+
+counties_map <- combined %>% 
+  arrange(tractid) %>% 
+  filter(distance <= 3200)
+
+counties_white <- counties_map %>% 
+  filter(variable == "White")
+
+counties_black <- counties_map %>%
+  filter(variable == "Black")
+
+counties_asian <- counties_map %>%
+  filter(variable == "Asian")
+
+counties_hispanic <- counties_map %>%
+  filter(variable == "Hispanic")
+
+# Define palette and icons for the map.
+
+pal <- colorNumeric(palette = "plasma", domain = counties_map$percent, n = 100)
+pal2 <- colorNumeric(palette = "plasma", domain = counties_map$rank, n = 100)
+
+mbtaIcon <- makeIcon("images/mbta-icon.png", iconWidth = 8, iconHeight = 8)
+
+# Create a Leaflet map. Add map panes to order the layers, and add tiles (map
+# background).
+
+leaflet() %>% 
+  addMapPane(name = "polygons", zIndex = 1) %>% 
+  addMapPane(name = "lines", zIndex = 2) %>% 
+  addMapPane(name = "nodes", zIndex = 3) %>% 
+  addProviderTiles(provider = "CartoDB.Positron",  
+                   options = leafletOptions(pane = "polygons")) %>%
+  
+  # Add a new polygon layer for each demographic layer, as defined in lines
+  # 167-181. Define the popup labels for each tract. Note: the Shiny version of
+  # this code uses a seperate plot output instead of the native Leaflet popups.
+  
+  addPolygons(data = counties_white,
+              popup = ~ paste("Nearest station: ", station, "<br>",
+                              "Distance: ", round(distance), "meters",
+                              "<br>",
+                              "White: ", round(counties_white$percent), "%",
+                              "<br>",
+                              "Black: ", round(counties_black$percent), "%",
+                              "<br>",
+                              "Asian: ", round(counties_asian$percent), "%",
+                              "<br>",
+                              "Hispanic: ", round(counties_hispanic$percent),
+                              "%"),
+              highlightOptions = highlightOptions(fillOpacity = 0.3),
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7,
+              color = ~ pal(percent),
+              group = "White",
+              options = leafletOptions(pane = "polygons")) %>%
+  addPolygons(data = counties_black, 
+              popup = ~ paste("Nearest station: ", station, "<br>", 
+                              "Distance: ", round(distance), "meters",
+                              "<br>",
+                              "White: ", round(counties_white$percent), "%", 
+                              "<br>",
+                              "Black: ", round(counties_black$percent), "%",
+                              "<br>",
+                              "Asian: ", round(counties_asian$percent), "%",
+                              "<br>",
+                              "Hispanic: ", round(counties_hispanic$percent), 
+                              "%"),
+              highlightOptions = highlightOptions(fillOpacity = 0.3),
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7,
+              color = ~ pal(percent),
+              group = "Black",
+              options = leafletOptions(pane = "polygons")) %>%
+  addPolygons(data = counties_asian, 
+              popup = ~ paste("Nearest station: ", station, "<br>", 
+                              "Distance: ", round(distance), "meters",
+                              "<br>",
+                              "White: ", round(counties_white$percent), "%", 
+                              "<br>",
+                              "Black: ", round(counties_black$percent), "%",
+                              "<br>",
+                              "Asian: ", round(counties_asian$percent), "%",
+                              "<br>",
+                              "Hispanic: ", round(counties_hispanic$percent), 
+                              "%"),
+              highlightOptions = highlightOptions(fillOpacity = 0.3),
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7,
+              color = ~ pal(percent),
+              group = "Asian",
+              options = leafletOptions(pane = "polygons")) %>%
+  addPolygons(data = counties_hispanic, 
+              popup = ~ paste("Nearest station: ", station, "<br>", 
+                              "Distance: ", round(distance), "meters",
+                              "<br>",
+                              "White: ", round(counties_white$percent), "%", 
+                              "<br>",
+                              "Black: ", round(counties_black$percent), "%",
+                              "<br>",
+                              "Asian: ", round(counties_asian$percent), "%",
+                              "<br>",
+                              "Hispanic: ", round(counties_hispanic$percent), 
+                              "%"),
+              highlightOptions = highlightOptions(fillOpacity = 0.3),
+              stroke = FALSE,
+              smoothFactor = 0,
+              fillOpacity = 0.7,
+              color = ~ pal(percent),
+              group = "Hispanic",
+              options = leafletOptions(pane = "polygons")) %>%
+
+  # Add a legend so users can interpret the colors of each layer.
+  
+  addLegend(data = counties_map, "bottomright",
+              pal = pal,
+              values = ~ percent,
+              title = "Percentage",
+              opacity = 1) %>% 
+
+  # Add a polyline layer for the MBTA lines.
+  
+  addPolylines(data = mbta, group = "Lines",
+               popup = ~ str_extract(line, "^([^,]*)"),
+               options = leafletOptions(pane = "lines"),
+               weight = 2) %>%
+
+  # Add a marker layer for the MBTA stations.
+  
+  addMarkers(data = mbta_nodes, icon = mbtaIcon, group = "Stations",
+             popup = ~ str_extract(station, "^([^,]*)"),
+             options = leafletOptions(pane = "nodes")) %>%
+
+  # Add a layer cotrol panel so users can toggle between demographic layers.
+  
+  addLayersControl(baseGroups = c("White", "Black", "Asian", "Hispanic"),
+                   overlayGroups = c("Lines", "Stations"),
+                   options = layersControlOptions(collapsed = FALSE))
+```
+
+```{r model-data}
+
+# Create a new variable that indicates which demographic group is most prevalent
+# in a given census tract. First, drop the geometry data so the data can be
+# transformed; group the data by tract, arrange by percent, and slice the top
+# row for each group. The result is a new string column that can be joined with
+# the model data.
+
+race_plurality <- combined %>% 
+  st_drop_geometry() %>%
+  group_by(tractid) %>% 
+  arrange(desc(percent), .by_group = TRUE) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  select(tractid, variable) %>%
+  mutate(plurality = as_factor(variable)) %>% 
+  select(-variable)
+
+# Clean the combined data. Drop the geometry data so the data frame can be used
+# with tidymodels workflow. Filter to include tracts that are a limited distance
+# from the nearest T stop. Join the reace_plurality data frame.
+
+model_data <- combined %>% 
+  st_drop_geometry() %>%
+  select(tractid, variable, percent, distance) %>% 
+  pivot_wider(names_from = variable, values_from = percent) %>% 
+  clean_names() %>% 
+  filter(distance <= 3218) %>% 
+  inner_join(race_plurality, by = "tractid") %>% 
+  drop_na() 
+```
+
+```{r model-choice}
+
+# Use tidymodels workflows to determine what model to use for analysis.  Start
+# by setting the seed so the results are reproducible.
+
+set.seed(10)
+
+# Split the data into training and testing sets.
+
+model_split <- initial_split(model_data, prop = 0.8)
+model_train <- training(model_split)
+model_test <- testing(model_split)
+model_folds <- vfold_cv(model_train, v = 10)
+
+# Define recipes to test with different workflows. Add recipes and experiment
+# with predictors to find a model that best represents the model data.
+
+recipe_1 <- recipe(distance ~  white + black + asian + hispanic,
+                   data = model_train)
+
+recipe_2 <- recipe(distance ~  white, data = model_train)
+
+recipe_3 <- recipe(distance ~ plurality, data = model_data) %>% 
+  step_dummy(plurality)
+
+recipe_4 <- recipe(distance ~ white + black + asian + hispanic + plurality,
+                   data = model_data) %>% 
+  step_dummy(plurality)
+
+# Create workflow objects to store lm and stan models. 
+
+lm_wfl <- workflow() %>% 
+  add_model(linear_reg() %>%
+            set_engine("lm") %>%
+            set_mode("regression"))
+
+stan_wfl <- workflow() %>% 
+  add_model(linear_reg() %>%
+            set_engine("stan") %>%
+            set_mode("regression"))
+
+# Combine lm and stan models with each recipe.
+
+lm_wfl_1 <- lm_wfl %>% add_recipe(recipe_1)
+lm_wfl_2 <- lm_wfl %>% add_recipe(recipe_2)
+lm_wfl_3 <- lm_wfl %>% add_recipe(recipe_3)
+lm_wfl_4 <- lm_wfl %>% add_recipe(recipe_4)
+
+stan_wfl_1 <- stan_wfl %>% add_recipe(recipe_1)
+stan_wfl_2 <- stan_wfl %>% add_recipe(recipe_2)
+stan_wfl_3 <- stan_wfl %>% add_recipe(recipe_3)
+stan_wfl_4 <- stan_wfl %>% add_recipe(recipe_4)
+
+# Evaluate the recipes by calculating the root mean squared error (RMSE) of
+# each model's predictions -- compare each model's predictions for the training
+# data against the observed values in the training data. Define a function to
+# calculate RMSE so it's easier  to swap out workflows and quickly compare
+# models.
+
+prediction_error <- function(wfl, data){
+  wfl %>% 
+    fit(data) %>% 
+    predict(new_data = data) %>% 
+    bind_cols(data %>% select(distance)) %>% 
+    metrics(truth = .pred, estimate = distance) %>% 
+    slice(1) %>% 
+    select(.estimate) %>% 
+    rename(rmse = .estimate)
+  
+}
+
+# Store each workflow's RMSE values in a tibble for easier comparison. For both
+# the lm and stan models, recipe 4 produced the lowest RMSE value on the
+# training and testing data.
+
+lm_error <- tibble(wfl = c(1:4),
+                     rmse_train = c(prediction_error(lm_wfl_1, model_train),
+                                    prediction_error(lm_wfl_2, model_train),
+                                    prediction_error(lm_wfl_3, model_train),
+                                    prediction_error(lm_wfl_4, model_train)),
+                     rmse_test = c(prediction_error(lm_wfl_1, model_test),
+                                   prediction_error(lm_wfl_2, model_test),
+                                   prediction_error(lm_wfl_3, model_test),
+                                   prediction_error(lm_wfl_4, model_test)))
+
+stan_error <- tibble(wfl = c(1:4),
+                     rmse_train = c(prediction_error(stan_wfl_1, model_train),
+                              prediction_error(stan_wfl_2, model_train),
+                              prediction_error(stan_wfl_3, model_train),
+                              prediction_error(stan_wfl_4, model_train)),
+                     rmse_test = c(prediction_error(stan_wfl_1, model_test),
+                                  prediction_error(stan_wfl_2, model_test),
+                                  prediction_error(stan_wfl_3, model_test),
+                                  prediction_error(stan_wfl_4, model_test)))
+
+# Define a function that calculates the RMSE values after cross validation. The
+# function takes an workflow object and fits a model using the resample data.
+# The cross-validated RMSE can be used as a prediction for how well the model
+# performs on 'new' data. Since the above code determined recipe 4 produced the
+# lowest RMSE value, crossvalidate lm_wfl_4 an stan_wfl_4 to ensure the models
+# are not overfitted to the training data.
+
+cross_validate <- function(wfl, resamples) {
+  
+  error <- wfl %>% 
+    fit_resamples(resamples = resamples) %>% 
+    collect_metrics()
+  
+  error %>% 
+    filter(.metric == "rmse") %>% 
+    select(mean) %>% 
+    rename(rmse = mean)
+}
+
+cross_validate(lm_wfl_4, model_folds)
+cross_validate(stan_wfl_4, model_folds)
+```
+
+```{r fit-obj}
+
+# Fit the chosen model to a new object -- this will allow us to create
+# predictions next.
+
+fit <- stan_glm(data = model_data, formula = distance ~ white + black + asian + 
+           hispanic + plurality - 1,
+           family = "gaussian",
+           refresh = 0)
+```
+
+```{r predictions}
+
+# Define the covariates used for running the predictions. I store 4 rows in the
+# new_obs object, each representing tracts by majority racial/ethnic group. For
+# each row, I use the average population proportions present in that case. For
+# example, row 3 represents majority Asian tracts, and the population proportions
+# for row three are the average proportions for majority Asian tracts.
+
+new_obs <- model_data %>% 
+  group_by(plurality) %>% 
+  summarize(white = mean(white),
+            black = mean(black),
+            asian = mean(asian),
+            hispanic = mean(hispanic), .groups = "drop") %>% 
+  ungroup()
+
+# Use the fit object and new_obs object to create draws from a posterior
+# probability distribution. The pp object stores predictions for individual
+# tracts based on the input new_obs. The columns represent the four levels of
+# the plurality variable -- white, Black, Asian, Hispanic. The rows represent
+# predicted distances for each case with average demographic proportions.
+
+pp <- posterior_predict(fit, newdata = new_obs) %>% 
+  as_tibble() %>% 
+  mutate_all(as.numeric)
+
+# Rename the columns for clarity,
+  
+colnames(pp) <- new_obs$plurality
+
+# Create a histogram with the pp object to visualize the posterior probability
+# distribution of predicted distances for majority white, Black, Asian, and
+# Hispanic tracts, given average demographics in each case. Clean up the labels
+# and theme elements.
+
+pp_graph <- pp %>% 
+  pivot_longer(cols = new_obs$plurality, 
+               names_to = "plurality", values_to = "distance") %>% 
+  ggplot(aes(x = distance, fill = plurality)) +
+    geom_histogram(aes(y = after_stat(count/sum(count))),
+                   bins = 100,
+                   position = "identity",
+                   alpha = 0.6) +
+    scale_fill_brewer(palette = "Dark2", 
+                      name = "Tract majority",
+                      labels = c("Asian", "Black", "Hispanic", "White")) +
+    theme_minimal() +
+    scale_y_continuous(labels = scales::percent_format()) +
+    labs(x = "Distance to nearest MBTA station (meters)",
+         y = "Probability",
+         title = "Posterior Predictive Distribution",
+         subtitle = "Predicted distance by census tracts' majority racial/ethnic group",
+         caption = "\n*Tracts up to 3218 meters (2 miles) from nearest station")
+
+# Create another posterior distribution to predict the expected outcome for all
+# census tracts in the analysis. Use the fit and new_obs objects to generate
+# 4000 distance predictions for majority white, Black, Asian, and Hispanic
+# tracts, given average demographics in each case. Clean up the labels and theme
+# elements.
+
+pe <- posterior_epred(fit, newdata = new_obs) %>% 
+  as_tibble() %>% 
+  mutate_all(as.numeric)
+
+# Rename the columns for clarity.
+
+colnames(pe) <- new_obs$plurality
+
+# Create a histogram with the pe object to visualize the posterior probability
+# distribution of expected distances for majority white, Black, Asian, and
+# Hispanic tracts, given average demographics in each case. Clean up the labels
+# and theme elements.
+
+pe_graph <- pe %>% 
+  pivot_longer(cols = new_obs$plurality, 
+               names_to = "plurality", values_to = "distance") %>% 
+  ggplot(aes(x = distance, fill = plurality)) +
+    geom_histogram(aes(y = after_stat(count/sum(count))),
+                   bins = 100,
+                   position = "identity",
+                   alpha = 0.6) +
+    scale_fill_brewer(palette = "Dark2", 
+                      name = "Tract majority",
+                      labels = c("Asian", "Black", "Hispanic", "White")) +
+    scale_y_continuous(labels = scales::percent_format()) +
+    theme_minimal() +
+    labs(x = "Distance to nearest MBTA station (meters)",
+         y = "Probability",
+         title = "Posterior Probability Distribution",
+         subtitle = "Expected distance by census tracts' majority racial/ethnic group",
+         caption = "\n*Tracts up to 3218 meters (2 miles) from nearest station")
+
+# Create a table to store the results of the regression. The table stores the
+# coeeficients for each predictor in the model formula.
+
+tbl <- fit %>% 
+  tbl_regression(label = list(white ~ "% White", 
+                              black ~ "% Black", 
+                              asian ~ "% Asian", 
+                              hispanic ~ "% Hispanic",
+                              plurality ~ "Majority group")) %>% 
+  italicize_levels() %>% 
+  bold_labels() %>% 
+  as_gt() %>% 
+  tab_header("Regression of demographics and distance", 
+             subtitle = "Effect of demographics on MBTA accessibility") %>% 
+  tab_source_note("*Tracts up to 3218 meters (2 miles) from nearest station")
+
+pp_graph
+pe_graph
+tbl
+
+# Use the following code to save the graphics as images for the Shiny app.
+# ggsave("pe_2.png",
+#        plot = pe_graph,
+#        device = "png",
+#        scale = 1,
+#        width = 7,
+#        height = 5,
+#        units = "in",
+#        dpi = 300,
+#        path = "mbta_access/www")
+```
+

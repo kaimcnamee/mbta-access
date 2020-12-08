@@ -1,0 +1,12 @@
+name: mbta_access
+title: mbta_access
+username:
+account: kaimcnamee
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3328839
+bundleId: 3958869
+url: https://kaimcnamee.shinyapps.io/mbta_access/
+when: 1607410185.32912
+asMultiple: FALSE
+asStatic: FALSE
