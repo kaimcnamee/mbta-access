@@ -237,7 +237,7 @@ ui <-
                           Harvard studying Governmennt and Economics. This is my 
                           final project for Gov 50: Data Fall 2020. You can find 
                           the code and data that went into this project on", 
-                          tags$a(href="https://github.com/kaimcnamee", 
+                          tags$a(href="https://github.com/kaimcnamee/mbta-access", 
                                  "GitHub.")),
                         p(tags$a(href="mailto:kaimcnamee@college.harvard.edu", 
                                  "kaimcnamee@college.harvard.com")),
