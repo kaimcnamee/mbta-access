@@ -323,21 +323,28 @@ race_plurality <- combined %>%
   slice(1) %>% 
   ungroup() %>% 
   select(tractid, variable) %>%
-  mutate(plurality = as_factor(variable)) %>% 
+  mutate(plurality = variable) %>% 
   select(-variable)
 
 # Clean the combined data. Drop the geometry data so the data frame can be used
 # with tidymodels workflow. Filter to include tracts that are a limited distance
-# from the nearest T stop. Join the reace_plurality data frame.
+# from the nearest T stop. Join the race_plurality data frame.
 
 model_data <- combined %>% 
   st_drop_geometry() %>%
   select(tractid, variable, percent, distance) %>% 
   pivot_wider(names_from = variable, values_from = percent) %>% 
   clean_names() %>% 
-  filter(distance <= 3218) %>% 
+  filter(distance <= 1609) %>% 
   inner_join(race_plurality, by = "tractid") %>% 
-  drop_na() 
+  drop_na() %>% 
+  
+  # After cross validation (in the next code chunk), I found that there were not
+  # enough tracts with mostly Asian residents to meaningfully analyze the effect
+  # of plurality = Asian in the model. Filter model_data to drop rows where
+  # plurality = Asian.
+  
+  filter(plurality != "Asian")
 ```
 
 ```{r model-choice}
@@ -357,7 +364,7 @@ model_folds <- vfold_cv(model_train, v = 10)
 # Define recipes to test with different workflows. Add recipes and experiment
 # with predictors to find a model that best represents the model data.
 
-recipe_1 <- recipe(distance ~  white + black + asian + hispanic,
+recipe_1 <- recipe(distance ~  white + black + hispanic,
                    data = model_train)
 
 recipe_2 <- recipe(distance ~  white, data = model_train)
@@ -365,14 +372,9 @@ recipe_2 <- recipe(distance ~  white, data = model_train)
 recipe_3 <- recipe(distance ~ plurality, data = model_data) %>% 
   step_dummy(plurality)
 
-recipe_4 <- recipe(distance ~ white + black + asian + hispanic + plurality,
+recipe_4 <- recipe(distance ~ white + black + hispanic + plurality,
                    data = model_data) %>% 
   step_dummy(plurality)
-
-recipe_5 <- recipe(distance ~ white + black + asian + hispanic + plurality,
-                   data = model_data) %>% 
-  step_dummy(plurality) %>% 
-  step_poly(white:hispanic, degree = 3)
 
 # Create workflow objects to store lm and stan models. 
 
@@ -430,11 +432,11 @@ lm_error <- tibble(wfl = c(1:4),
                                    prediction_error(lm_wfl_3, model_test),
                                    prediction_error(lm_wfl_4, model_test)))
 
-stan_error <- tibble(wfl = c(1:5),
+stan_error <- tibble(wfl = c(1:4),
                      rmse_train = c(prediction_error(stan_wfl_1, model_train),
-                              prediction_error(stan_wfl_2, model_train),
-                              prediction_error(stan_wfl_3, model_train),
-                              prediction_error(stan_wfl_4, model_train)),
+                                    prediction_error(stan_wfl_2, model_train),
+                                    prediction_error(stan_wfl_3, model_train),
+                                    prediction_error(stan_wfl_4, model_train)),
                      rmse_test = c(prediction_error(stan_wfl_1, model_test),
                                   prediction_error(stan_wfl_2, model_test),
                                   prediction_error(stan_wfl_3, model_test),
@@ -468,7 +470,7 @@ cross_validate(stan_wfl_4, model_folds)
 # Fit the chosen model to a new object -- this will allow us to create
 # predictions next.
 
-fit <- stan_glm(data = model_data, formula = distance ~ white + black + asian + 
+fit <- stan_glm(data = model_data, formula = distance ~ white + black + 
            hispanic + plurality - 1,
            family = "gaussian",
            refresh = 0)
@@ -479,21 +481,21 @@ fit <- stan_glm(data = model_data, formula = distance ~ white + black + asian +
 # Define the covariates used for running the predictions. I store 4 rows in the
 # new_obs object, each representing tracts by majority racial/ethnic group. For
 # each row, I use the average population proportions present in that case. For
-# example, row 3 represents majority Asian tracts, and the population proportions
-# for row three are the average proportions for majority Asian tracts.
+# example, row 2 represents majority Black tracts, and the population
+# proportions for row three are the average proportions for majority Black
+# tracts.
 
 new_obs <- model_data %>% 
   group_by(plurality) %>% 
   summarize(white = mean(white),
             black = mean(black),
-            asian = mean(asian),
             hispanic = mean(hispanic), .groups = "drop") %>% 
   ungroup()
 
 # Use the fit object and new_obs object to create draws from a posterior
 # probability distribution. The pp object stores predictions for individual
-# tracts based on the input new_obs. The columns represent the four levels of
-# the plurality variable -- white, Black, Asian, Hispanic. The rows represent
+# tracts based on the input new_obs. The columns represent the three levels of
+# the plurality variable -- white, Black, Hispanic. The rows represent
 # predicted distances for each case with average demographic proportions.
 
 pp <- posterior_predict(fit, newdata = new_obs) %>% 
@@ -505,7 +507,7 @@ pp <- posterior_predict(fit, newdata = new_obs) %>%
 colnames(pp) <- new_obs$plurality
 
 # Create a histogram with the pp object to visualize the posterior probability
-# distribution of predicted distances for majority white, Black, Asian, and
+# distribution of predicted distances for majority white, Black, and
 # Hispanic tracts, given average demographics in each case. Clean up the labels
 # and theme elements.
 
@@ -518,19 +520,18 @@ pp_graph <- pp %>%
                    position = "identity",
                    alpha = 0.6) +
     scale_fill_brewer(palette = "Dark2", 
-                      name = "Tract majority",
-                      labels = c("Asian", "Black", "Hispanic", "White")) +
+                      name = "Tract majority") +
     theme_minimal() +
     scale_y_continuous(labels = scales::percent_format()) +
     labs(x = "Distance to nearest MBTA station (meters)",
          y = "Probability",
          title = "Posterior Predictive Distribution",
          subtitle = "Predicted distance by census tracts' majority racial/ethnic group",
-         caption = "\n*Tracts up to 3218 meters (2 miles) from nearest station")
+         caption = "\n*Tracts up to 1609 meters (1 mile) from nearest station")
 
 # Create another posterior distribution to predict the expected outcome for all
 # census tracts in the analysis. Use the fit and new_obs objects to generate
-# 4000 distance predictions for majority white, Black, Asian, and Hispanic
+# 4000 distance predictions for majority white, Black, and Hispanic
 # tracts, given average demographics in each case. Clean up the labels and theme
 # elements.
 
@@ -543,7 +544,7 @@ pe <- posterior_epred(fit, newdata = new_obs) %>%
 colnames(pe) <- new_obs$plurality
 
 # Create a histogram with the pe object to visualize the posterior probability
-# distribution of expected distances for majority white, Black, Asian, and
+# distribution of expected distances for majority white, Black, and
 # Hispanic tracts, given average demographics in each case. Clean up the labels
 # and theme elements.
 
@@ -556,15 +557,14 @@ pe_graph <- pe %>%
                    position = "identity",
                    alpha = 0.6) +
     scale_fill_brewer(palette = "Dark2", 
-                      name = "Tract majority",
-                      labels = c("Asian", "Black", "Hispanic", "White")) +
+                      name = "Tract majority") +
     scale_y_continuous(labels = scales::percent_format()) +
     theme_minimal() +
     labs(x = "Distance to nearest MBTA station (meters)",
          y = "Probability",
          title = "Posterior Probability Distribution",
          subtitle = "Expected distance by census tracts' majority racial/ethnic group",
-         caption = "\n*Tracts up to 3218 meters (2 miles) from nearest station")
+         caption = "\n*Tracts up to 1609 meters (1 mile) from nearest station")
 
 # Create a table to store the results of the regression. The table stores the
 # coeeficients for each predictor in the model formula.
@@ -572,7 +572,6 @@ pe_graph <- pe %>%
 tbl <- fit %>% 
   tbl_regression(label = list(white ~ "% White", 
                               black ~ "% Black", 
-                              asian ~ "% Asian", 
                               hispanic ~ "% Hispanic",
                               plurality ~ "Majority group")) %>% 
   italicize_levels() %>% 
@@ -580,21 +579,21 @@ tbl <- fit %>%
   as_gt() %>% 
   tab_header("Regression of demographics and distance", 
              subtitle = "Effect of demographics on MBTA accessibility") %>% 
-  tab_source_note("*Tracts up to 3218 meters (2 miles) from nearest station")
+  tab_source_note("*Tracts up to 1609 meters (1 mile) from nearest station")
 
 pp_graph
 pe_graph
 tbl
 
 # Use the following code to save the graphics as images for the Shiny app.
-# ggsave("pe_2.png",
-#        plot = pe_graph,
+# ggsave("pp_1.png",
+#        plot = pp_graph,
 #        device = "png",
 #        scale = 1,
 #        width = 7,
 #        height = 5,
 #        units = "in",
 #        dpi = 300,
-#        path = "mbta_access/www")
+#        path = "app/www")
 ```
 

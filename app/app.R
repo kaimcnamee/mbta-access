@@ -1,5 +1,3 @@
-# Milestone 8
-
 library(shiny)
 library(tidyverse)
 library(leaflet)
@@ -100,12 +98,14 @@ ui <-
                         p("To model the data and make predictions, I used a 
                           linear regression model. With distance as the outcome 
                           variable, I defined the predictors as the percentage 
-                          of the total population made up of white, Black, 
-                          Asian, and Hispanic residents, and the majority group. 
-                          For each analysis, the effects of the predictor 
-                          variables on distance were subtle — this is indicated 
-                          by the overlapping distributions and confidence 
-                          intervals in the graphics and tables below."),
+                          of the total population made up of white, Black, and 
+                          Hispanic residents, and the majority group (there were 
+                          too few majority Asian tracts to model the effect on 
+                          distance). For each analysis, the effects of the 
+                          predictor variables on distance were subtle — this is 
+                          indicated by the overlapping distributions and 
+                          confidence intervals in the graphics and tables 
+                          below."),
                         p("I conducted my analysis on two sets of the data — one 
                           filtered to include tracts up to 1609 meters (1 mile), 
                           and one filtered to include tracts up to 3218 meters 
@@ -134,6 +134,7 @@ ui <-
                         p("And the predictions for individual tracts:"),
                         br(),
                         img(src = "pp_2.png", style = "width: 100%"),
+                        br(),
                         h3("Tables"),
                         p("See the below table for the results of the regression 
                           for tracts up to 1609m from the nearest station. The 
@@ -154,11 +155,7 @@ ui <-
                           relative results of the regression are similar: the 
                           median impact on distance is greatest for the 
                           proportion of Black residents, but the confidence 
-                          intervals indicate even greater overlap. Here, the 
-                          median distance for mostly Asian tracts is higher 
-                          than all other groups, but the negative affect of the 
-                          proportion of Asian residents is much stronger than 
-                          other groups."),
+                          intervals indicate even greater overlap."),
                         br(),
                         div(class = "flex", 
                             img(src = "tbl_2.png", style = "width: 40%")),
@@ -252,7 +249,7 @@ ui <-
 
 
 
-# Define server logic
+# Define server logic.
 
 server <- function(input, output) {
     
