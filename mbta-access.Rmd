@@ -538,7 +538,7 @@ pp_graph <- pp %>%
          x = "Distance to nearest MBTA station (meters)",
          title = "Posterior Predictive Distribution",
          subtitle = "Predicted distance by census blocks' majority racial/ethnic group",
-         caption = "\n*Tracts up to 1609 meters (1 mile) from nearest station")
+         caption = "\n*Tracts up to 3218 meters (2 miles) from nearest station")
 
 # Create another posterior distribution to predict the expected outcome for all
 # census tracts in the analysis. Use the fit and new_obs objects to generate
@@ -575,7 +575,7 @@ pe_graph <- pe %>%
          y = "Probability",
          title = "Posterior Probability Distribution",
          subtitle = "Expected distance by census tracts' majority racial/ethnic group",
-         caption = "\n*Tracts up to 1609 meters (1 mile) from nearest station")
+         caption = "\n*Tracts up to 3218 meters (2 miles) from nearest station")
 
 # Create a table to store the results of the regression. The table stores the
 # coeeficients for each predictor in the model formula.
@@ -597,14 +597,14 @@ pe_graph
 tbl
 
 # Use the following code to save the graphics as images for the Shiny app.
-# ggsave("pe_2.png",
-#        plot = pe_graph,
-#        device = "png",
-#        scale = 1,
-#        width = 7,
-#        height = 5,
-#        units = "in",
-#        dpi = 300,
-#        path = "app/www")
+ggsave("pp_2.png",
+       plot = pp_graph,
+       device = "png",
+       scale = 1,
+       width = 7,
+       height = 5,
+       units = "in",
+       dpi = 300,
+       path = "app/www")
 ```
 

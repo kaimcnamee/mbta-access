@@ -5,8 +5,8 @@ account: kaimcnamee
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 3328839
-bundleId: 3962669
+bundleId: 3980337
 url: https://kaimcnamee.shinyapps.io/mbta_access/
-when: 1607467971.68157
+when: 1607806121.24136
 asMultiple: FALSE
 asStatic: FALSE
