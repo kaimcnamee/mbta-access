@@ -20,6 +20,7 @@ library(readxl)
 library(gtsummary)
 library(broom.mixed)
 library(gt)
+library(ggridges)
 ```
 
 ```{r get-data cache=true}
@@ -56,10 +57,11 @@ mbta_nodes <- st_read(dsn = "data/mbta_rapid_transit/",
   st_transform(crs = 4326) %>% 
   clean_names()
 
-# Extract the longitude and lattitude data from the geometry column in the
-# mbta_nodes data. Having the coordinates in 2 columns will be helpful for the
-# next calculations.This function was giving me issues while piped with the rest
-# of the data cleaning, so it has to be executed in its own pipe.
+# Extract the longitude and latitude data from the geometry column in the
+# mbta_nodes data. Having the coordinates in 2 columns is necessary for distance
+# calculations in the next code chunk. extract() was giving me issues while
+# piped with the rest of the data cleaning, so it has to be executed in its own
+# pipe.
 
 node_extract <- extract(mbta_nodes, geometry, 
                       into = c("lon", "lat"), "\\((.*),(.*)\\)", conv = T)
@@ -74,7 +76,7 @@ node_coord <- tibble(station = node_extract$station) %>%
          id = row_number())
 
 # Read in ACS data. Define reacevars object to pass into the get_acs() call.
-# Within get_acs(), specify tract as the unit of analysis,  Ma as the state, the
+# Within get_acs(), specify tract as the unit of analysis,  MA as the state, the
 # three counties served by the MBTA as the counties, and summary_var as the
 # population.
 
@@ -168,7 +170,7 @@ combined <- counties %>%
 
 counties_map <- combined %>% 
   arrange(tractid) %>% 
-  filter(distance <= 3200)
+  filter(distance <= 3218)
 
 counties_white <- counties_map %>% 
   filter(variable == "White")
@@ -335,7 +337,7 @@ model_data <- combined %>%
   select(tractid, variable, percent, distance) %>% 
   pivot_wider(names_from = variable, values_from = percent) %>% 
   clean_names() %>% 
-  filter(distance <= 1609) %>% 
+  filter(distance <= 3218) %>% 
   inner_join(race_plurality, by = "tractid") %>% 
   drop_na() %>% 
   
@@ -461,8 +463,15 @@ cross_validate <- function(wfl, resamples) {
     rename(rmse = mean)
 }
 
-cross_validate(lm_wfl_4, model_folds)
-cross_validate(stan_wfl_4, model_folds)
+# Store the RMSE values after cross validation and check if the model is
+# overfitted. The RMSE values differ by around 15-20, so we can conclude the
+# model is not overfitted to the data. Cross validation determined there were
+# too few observations where plurality = Asian, resulting in an error -- I
+# dropped observations where plurality = Asian to continue the analysis (line
+# 348).
+
+lm_4_fold <- cross_validate(lm_wfl_4, model_folds)
+stan_4_fold <- cross_validate(stan_wfl_4, model_folds)
 ```
 
 ```{r fit-obj}
@@ -511,22 +520,24 @@ colnames(pp) <- new_obs$plurality
 # Hispanic tracts, given average demographics in each case. Clean up the labels
 # and theme elements.
 
-pp_graph <- pp %>% 
+pp_graph <- pp %>%
   pivot_longer(cols = new_obs$plurality, 
                names_to = "plurality", values_to = "distance") %>% 
-  ggplot(aes(x = distance, fill = plurality)) +
-    geom_histogram(aes(y = after_stat(count/sum(count))),
-                   bins = 100,
-                   position = "identity",
-                   alpha = 0.6) +
-    scale_fill_brewer(palette = "Dark2", 
-                      name = "Tract majority") +
+  ggplot(aes(x = distance, y = plurality, fill = plurality)) +
+    geom_density_ridges(stat = "binline", 
+                        bins = 100, 
+                        scale = 3,
+                        alpha = 0.6,
+                        size = 0) +
+    scale_fill_brewer(palette = "Dark2",
+                      name = "Tract majority",
+                      labels = c("Black", "Hispanic", "White")) +
     theme_minimal() +
-    scale_y_continuous(labels = scales::percent_format()) +
-    labs(x = "Distance to nearest MBTA station (meters)",
-         y = "Probability",
+    theme(legend.position = "none") +
+    labs(y = "",
+         x = "Distance to nearest MBTA station (meters)",
          title = "Posterior Predictive Distribution",
-         subtitle = "Predicted distance by census tracts' majority racial/ethnic group",
+         subtitle = "Predicted distance by census blocks' majority racial/ethnic group",
          caption = "\n*Tracts up to 1609 meters (1 mile) from nearest station")
 
 # Create another posterior distribution to predict the expected outcome for all
@@ -586,8 +597,8 @@ pe_graph
 tbl
 
 # Use the following code to save the graphics as images for the Shiny app.
-# ggsave("pp_1.png",
-#        plot = pp_graph,
+# ggsave("pe_2.png",
+#        plot = pe_graph,
 #        device = "png",
 #        scale = 1,
 #        width = 7,

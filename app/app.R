@@ -86,20 +86,21 @@ ui <-
                         p("To model the relationship between census tract 
                           demographics and MBTA accessibility, I combined the 
                           2018 American Community Survey data with the MBTA’s 
-                          geographic data. Using the coordinates of census tract 
-                          centroids (the population-weighted center of a census 
-                          tract), I created a table containing every centroid 
-                          and the distances to each MBTA station. The final data 
-                          set I used for my analysis contained demographic 
-                          information, and distance to the nearest MBTA station, 
-                          for every census tract. I then created a new variable 
-                          to indicate the most prevalent racial/ethnic group 
-                          present in each census tract."),
-                        p("To model the data and make predictions, I used a 
-                          linear regression model. With distance as the outcome 
-                          variable, I defined the predictors as the percentage 
-                          of the total population made up of white, Black, and 
-                          Hispanic residents, and the majority group (there were 
+                          geographic data. Using the coordinates of each tract's 
+                          population center (the population-weighted center of a 
+                          census tract), I created a table containing every 
+                          population center and the distances to each MBTA 
+                          station. The final data set I used for my analysis 
+                          contained demographic information, and distance to the 
+                          nearest MBTA station, for every census tract. I then 
+                          created a new variable to indicate the most prevalent 
+                          racial/ethnic group present in each census tract."),
+                        p("After experimenting with different model 
+                          specifications, I decided to use a linear regression 
+                          model. With distance as the outcome variable, I 
+                          defined the predictors as the percentage of the total 
+                          population made up of white, Black, and Hispanic 
+                          residents, and the majority group (there were 
                           too few majority Asian tracts to model the effect on 
                           distance). For each analysis, the effects of the 
                           predictor variables on distance were subtle — this is 
@@ -107,9 +108,10 @@ ui <-
                           confidence intervals in the graphics and tables 
                           below."),
                         p("I conducted my analysis on two sets of the data — one 
-                          filtered to include tracts up to 1609 meters (1 mile), 
-                          and one filtered to include tracts up to 3218 meters 
-                          (2 miles). This is to limit the analysis to 
+                          filtered to include tracts up to 1609 meters (1 mile)  
+                          from the nearest station, and one filtered to include 
+                          tracts up to 3218 meters (2 miles) from the nearest 
+                          station. This is to limit the analysis to 
                           Massachusetts residents who are most likely to use the 
                           MBTA."),
                         p("Starting with tracts up to 1609m from the nearest 
@@ -121,8 +123,10 @@ ui <-
                         img(src = "pe_1.png", style = "width: 100%"),
                         br(),
                         p("I also created a posterior probability distribution 
-                        to predict individual census tracts’ distance to the 
-                        nearest station:"),
+                          to predict individual census tracts’ distance to the 
+                          nearest station. Since the predictions are for
+                          individual tracts, the spread of the predictions is 
+                          much wider than the expected value predictions."),
                         br(),
                         img(src = "pp_1.png", style = "width: 100%"),
                         br(),
@@ -169,20 +173,36 @@ ui <-
                         br(),
                         h3("Limitations"),
                         p("This analysis is limited in two substantial ways. 
-                        First census tracts could be an imprecise way to 
-                        calculate the distance to the nearest MBTA station — a 
-                        more accurate way to measure distances to the nearest 
-                        station might be to calculate the distance between 
-                        households and train stations. The smallest geographical 
-                        unit of measurement for the ACS is block groups, so 
-                        further analysis could yield different results."),
+                          First census tracts could be an imprecise way to 
+                          calculate the distance to the nearest MBTA station — a 
+                          more accurate way to measure distances to the nearest 
+                          station might be to calculate the distance between 
+                          households and train stations. The smallest 
+                          geographical unit of measurement for the ACS is block 
+                          groups, so further analysis could yield different 
+                          results."),
+                        p("Running the regression using census block
+                          groups as the unit of analysis yields more distinct 
+                          distributions. These results suggest disparities in 
+                          transit access exist, but are not as observable on the 
+                          tract level."),
+                        br(),
+                        img(src = "pe_block_1.png", style = "width: 100%"),
+                        br(),
+                        p("One tradeoff to consider is that census 
+                          block gropus tpyically include 600 - 3,000 people. 
+                          Tracts include 1,200 - 8,000 people, have more 
+                          permanent boundaries, and are designed to have 
+                          relatively homogeneous population characteristics. 
+                          Due to the larger size of tracts, analysis based on 
+                          tract data might be more reliable."),
                         p("Second, distances in this analysis are in absolute 
-                        terms and do not reflect the real distance a commuter 
-                        might have to travel to get to a station. The method 
-                        used to calculate the distance in this project ignores 
-                        the layout of streets and the presence of buildings, 
-                        geographic features, etc. that might affect how far a 
-                        commuter actually travels to a station."),
+                          terms and do not reflect the real distance a commuter 
+                          might have to travel to get to a station. The method 
+                          used to calculate the distance in this project ignores 
+                          the layout of streets and the presence of buildings, 
+                          geographic features, etc. that might affect how far a 
+                          commuter actually travels to a station."),
                         br()
                         ),
                  column(2)
@@ -209,13 +229,16 @@ ui <-
                           with housing segregation, the construction of transit 
                           lines, highways, bridges, and more can have a 
                           significant impact on shaping the geography of urban 
-                          areas. Initially inspired by an article about highway 
+                          areas. Initially inspired by an", 
+                          tags$a(href = "https://www.latimes.com/opinion/story/2020-06-24/bulldoze-la-freeways-racism-monument",
+                            "article"), "about highway 
                           construction and its impact on marginalized 
                           communities in Los Angeles, I focused my project on 
                           the greater Boston area, where I currently live. By 
                           examining the racial geography of the city’s public 
                           transit system, I hope to shed light on some of the 
-                          systemic inequities present."), br(),
+                          systemic inequities present."), 
+                        br(),
                         h3("The data"),
                         p("The project uses demographic and geospatial data from 
                           the Census, the 2018 American Community Survey, and 
@@ -224,19 +247,19 @@ ui <-
                           used MBTA service, and the bus lines the organization 
                           has identified as key routes: the red, green, orange, 
                           blue, and silver lines. Using geographic coordinates 
-                          of census tract centroids (the population weighted 
-                          center of a census tract), I calculated the distance 
-                          to each tract’s nearest MBTA station  — this is the 
-                          data I used to build my statistical model."),
+                          of census tract population centers (the population 
+                          weighted center of a census tract), I calculated the 
+                          distance to each tract’s nearest MBTA station  — this 
+                          is the data I used to build my statistical model."),
                         br(),
                         h3("About me"),
                         p("I'm Kai McNamee. I'm currently and undergrad at 
                           Harvard studying Governmennt and Economics. This is my 
                           final project for Gov 50: Data Fall 2020. You can find 
                           the code and data that went into this project on", 
-                          tags$a(href="https://github.com/kaimcnamee/mbta-access", 
+                          tags$a(href = "https://github.com/kaimcnamee/mbta-access", 
                                  "GitHub.")),
-                        p(tags$a(href="mailto:kaimcnamee@college.harvard.edu", 
+                        p(tags$a(href = "mailto:kaimcnamee@college.harvard.edu", 
                                  "kaimcnamee@college.harvard.com")),
                         br()
                  ),
@@ -244,9 +267,6 @@ ui <-
              )
     )
 )
-    
-    
-
 
 
 # Define server logic.
